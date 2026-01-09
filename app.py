@@ -50,7 +50,7 @@ def create_final_json(uploaded_files):
 
         metric_block = {
             "id": idx,
-            "metric": f"DER_{uploaded_file[name]}",
+            "metric": f"DER_{uploaded_file.name}",
             "level": "l2",
             "supported_customers": {
                 "included": [],
@@ -330,6 +330,7 @@ elif app_choice == "DER ZIP Data Compiler":
         except Exception as e:
             st.error("❌ Error processing CSV files")
             st.exception(e)
+
 
 
 
