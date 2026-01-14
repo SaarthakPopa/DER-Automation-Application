@@ -3,6 +3,8 @@ import json
 import re
 import io
 import pandas as pd
+from pandas.errors import EmptyDataError
+from functools import reduce
 
 # =========================================================
 # APP CONFIG
@@ -126,7 +128,7 @@ mapping = {'advantasure-prod': 'Advantasure (Env 1)',
  'trinity-prod': 'Trinity Health National',
  'uninet-prod': 'CHI Health Partners',
  'usrc-prod': 'US RenalCare',
- 'walgreens-prod': 'Walgreens'}
+ 'walgreens-prod': 'Walgreens'}  # keep full mapping as needed
 
 def add_health_system(df):
     df = df.copy()
@@ -139,7 +141,7 @@ def add_health_system(df):
 CATEGORY_SUFFIX_MAP = {
     "": "Total",
     "_PATIENTS_WITH_CONTACT_NUMBER": "with contact number",
-    "_WITH_CONTACT_NUMBER": "with contact number",   # safety
+    "_WITH_CONTACT_NUMBER": "with contact number",
     "_PATIENTS_WITH_EMAIL": "with email",
     "_PATIENTS_WITH_ONLY_CONTACT": "only contact number",
     "_PATIENTS_WITH_ONLY_EMAIL": "only email",
@@ -203,28 +205,26 @@ if app_choice == "DER ZIP Data Compiler":
     )
 
     if uploaded_files:
-        df = pd.concat([pd.read_csv(f) for f in uploaded_files], ignore_index=True)
-
-        if "customer" not in df.columns:
-            st.error("❌ 'customer' column is mandatory")
-            st.stop()
 
         # ================= AGGREGATED =================
         if mode == "Aggregated (Customer level)":
+            df = pd.concat([pd.read_csv(f) for f in uploaded_files], ignore_index=True)
+
+            if "customer" not in df.columns:
+                st.error("❌ 'customer' column is mandatory")
+                st.stop()
+
             numeric_cols = df.select_dtypes(include="number").columns
             final_df = df.groupby("customer", as_index=False)[numeric_cols].sum()
             final_df = add_health_system(final_df)
 
-            st.dataframe(final_df, use_container_width=True)
-
         # ============ MORE THAN 2 COLUMNS (PIVOT) ============
         elif mode == "Use this for more than 2 columns":
+            df = pd.concat([pd.read_csv(f) for f in uploaded_files], ignore_index=True)
             df = add_health_system(df)
 
             st.markdown("### 📊 Base Output")
             st.dataframe(df, use_container_width=True)
-
-            st.markdown("### 🔄 Pivot Builder")
 
             all_cols = df.columns.tolist()
             numeric_cols = df.select_dtypes(include="number").columns.tolist()
@@ -235,7 +235,7 @@ if app_choice == "DER ZIP Data Compiler":
             agg_func = st.selectbox("Aggregation Function", ["sum", "mean", "count", "min", "max"])
 
             if rows and values:
-                pivot_df = pd.pivot_table(
+                final_df = pd.pivot_table(
                     df,
                     index=rows,
                     columns=columns if columns else None,
@@ -243,86 +243,35 @@ if app_choice == "DER ZIP Data Compiler":
                     aggfunc=agg_func,
                     fill_value=0
                 ).reset_index()
-
-                st.markdown("### 📐 Pivot Preview")
-                st.dataframe(pivot_df, use_container_width=True)
-
-                st.download_button(
-                    "⬇️ Download Pivot CSV",
-                    pivot_df.to_csv(index=False),
-                    "pivot.csv",
-                    "text/csv"
-                )
-
-            st.download_button(
-                "⬇️ Download Base CSV",
-                df.to_csv(index=False),
-                "base.csv",
-                "text/csv"
-            )
-            st.stop()
+            else:
+                st.stop()
 
         # ============ CONTACT VALIDITY =================
-        elif mode == "Contact Validity Compilation":
-
+        else:
             compiled_dfs = []
 
             for file in uploaded_files:
-                df = pd.read_csv(file)
+                try:
+                    df = pd.read_csv(file)
 
-                if "customer" not in df.columns:
-                    st.error(f"❌ 'customer' missing in {file.name}")
-                    st.stop()
+                    if df.empty:
+                        st.warning(f"⚠️ Skipped empty file: {file.name}")
+                        continue
 
-            compiled = compile_contact_validity_single_df(df)
-            compiled_dfs.append(compiled)
+                    if "customer" not in df.columns:
+                        st.warning(f"⚠️ 'customer' missing in {file.name}, skipped")
+                        continue
 
-        # Outer join all compiled results on customer + category
-            from functools import reduce
+                    compiled_dfs.append(compile_contact_validity_single_df(df))
+
+                except EmptyDataError:
+                    st.warning(f"⚠️ Skipped empty file: {file.name}")
+
+            if not compiled_dfs:
+                st.error("❌ No valid files to process")
+                st.stop()
 
             final_df = reduce(
-                lambda left, right: pd.merge(
-                    left,
-                    right,
-                    on=["customer", "Health System Name", "Category"],
-                    how="outer"
-                ),
-                compiled_dfs
-            )
-
-            final_df = final_df.fillna(0)
-
-            st.subheader("📊 Final Output")
-            st.dataframe(final_df, use_container_width=True)
-
-            st.download_button(
-                "⬇️ Download Final CSV",
-                final_df.to_csv(index=False),
-                "final.csv",
-                "text/csv"
-            )
-
-
-# =========================================================
-# ---------------- APP 1 UI -------------------------------
-# =========================================================
-if app_choice == "DER JSON Creator":
-    st.header("📌 DER JSON Creator")
-
-    uploaded_files = st.file_uploader(
-        "Upload SQL files",
-        type=["sql"],
-        accept_multiple_files=True
-    )
-
-    if uploaded_files:
-        final_json = create_final_json(uploaded_files)
-        st.json(final_json)
-
-        st.download_button(
-            "⬇️ Download JSON",
-            json.dumps(final_json, indent=4),
-            "DER_JSON_FINAL.json",
-            "application/json"
-        )
-
+                lambda l, r: pd.merge(
+                    l, r,
+                    on=
