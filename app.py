@@ -139,6 +139,7 @@ def add_health_system(df):
 CATEGORY_SUFFIX_MAP = {
     "": "Total",
     "_PATIENTS_WITH_CONTACT_NUMBER": "with contact number",
+    "_WITH_CONTACT_NUMBER": "with contact number",   # safety
     "_PATIENTS_WITH_EMAIL": "with email",
     "_PATIENTS_WITH_ONLY_CONTACT": "only contact number",
     "_PATIENTS_WITH_ONLY_EMAIL": "only email",
@@ -148,11 +149,11 @@ CATEGORY_SUFFIX_MAP = {
 
 def detect_base_metrics(columns):
     return [
-        col for col in columns
-        if col.startswith("NUM_") and "_PATIENTS_" not in col
+        c for c in columns
+        if c.startswith("NUM_") and "_PATIENTS_" not in c and "_WITH_" not in c
     ]
 
-def compile_contact_validity(df):
+def compile_contact_validity_single_df(df):
     records = []
     base_metrics = detect_base_metrics(df.columns)
 
@@ -168,17 +169,17 @@ def compile_contact_validity(df):
                         "Value": row[col]
                     })
 
-    final_df = pd.DataFrame(records)
-    final_df = add_health_system(final_df)
+    out = pd.DataFrame(records)
+    out = add_health_system(out)
 
-    final_df = final_df.pivot_table(
+    out = out.pivot_table(
         index=["customer", "Health System Name", "Category"],
         columns="Metric",
         values="Value",
         fill_value=0
     ).reset_index()
 
-    return final_df
+    return out
 
 # =========================================================
 # ---------------- APP 2 : DER ZIP COMPILER ----------------
@@ -263,15 +264,44 @@ if app_choice == "DER ZIP Data Compiler":
 
         # ============ CONTACT VALIDITY =================
         elif mode == "Contact Validity Compilation":
-            final_df = compile_contact_validity(df)
+
+            compiled_dfs = []
+
+            for file in uploaded_files:
+                df = pd.read_csv(file)
+
+                if "customer" not in df.columns:
+                    st.error(f"❌ 'customer' missing in {file.name}")
+                    st.stop()
+
+            compiled = compile_contact_validity_single_df(df)
+            compiled_dfs.append(compiled)
+
+        # Outer join all compiled results on customer + category
+            from functools import reduce
+
+            final_df = reduce(
+                lambda left, right: pd.merge(
+                    left,
+                    right,
+                    on=["customer", "Health System Name", "Category"],
+                    how="outer"
+                ),
+                compiled_dfs
+            )
+
+            final_df = final_df.fillna(0)
+
+            st.subheader("📊 Final Output")
             st.dataframe(final_df, use_container_width=True)
 
-        st.download_button(
-            "⬇️ Download Final CSV",
-            final_df.to_csv(index=False),
-            "final.csv",
-            "text/csv"
-        )
+            st.download_button(
+                "⬇️ Download Final CSV",
+                final_df.to_csv(index=False),
+                "final.csv",
+                "text/csv"
+            )
+
 
 # =========================================================
 # ---------------- APP 1 UI -------------------------------
@@ -295,3 +325,4 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
