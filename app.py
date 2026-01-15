@@ -201,6 +201,31 @@ def compile_contact_validity(df):
 
 
 
+def reorder_contact_validity_columns(df):
+    fixed_cols = ["customer", "Health System Name", "Category"]
+
+    den_cols = sorted([c for c in df.columns if c.startswith("den_")])
+    num_cols = sorted([c for c in df.columns if c.startswith("num_")])
+
+    ordered_metric_cols = []
+
+    for den in den_cols:
+        suffix = den.replace("den_", "")
+        matching_num = f"num_{suffix}"
+
+        ordered_metric_cols.append(den)
+        if matching_num in num_cols:
+            ordered_metric_cols.append(matching_num)
+
+    # Add any remaining num columns (safety)
+    remaining_nums = [c for c in num_cols if c not in ordered_metric_cols]
+    ordered_metric_cols.extend(remaining_nums)
+
+    return df[fixed_cols + ordered_metric_cols]
+
+
+
+
 # =========================================================
 # ---------------- APP 2 : DER ZIP COMPILER ----------------
 # =========================================================
@@ -267,6 +292,8 @@ if app_choice == "DER ZIP Data Compiler":
                 merged_df = merged_df.fillna(0)
             
                 final_df = compile_contact_validity(merged_df)
+                final_df = reorder_contact_validity_columns(final_df)
+
             
                 st.subheader("📊 Final Output")
                 st.dataframe(final_df, use_container_width=True)
@@ -300,6 +327,7 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
 
 
 
