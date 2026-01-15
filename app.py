@@ -1,9 +1,7 @@
 import streamlit as st
 import json
 import re
-import io
 import pandas as pd
-from pandas.errors import EmptyDataError
 from functools import reduce
 
 # =========================================================
@@ -128,7 +126,7 @@ mapping = {'advantasure-prod': 'Advantasure (Env 1)',
  'trinity-prod': 'Trinity Health National',
  'uninet-prod': 'CHI Health Partners',
  'usrc-prod': 'US RenalCare',
- 'walgreens-prod': 'Walgreens'}  # keep full mapping as needed
+ 'walgreens-prod': 'Walgreens'}
 
 def add_health_system(df):
     df = df.copy()
@@ -136,51 +134,41 @@ def add_health_system(df):
     return df
 
 # =========================================================
-# -------- CONTACT VALIDITY (GENERIC / DYNAMIC) ------------
+# -------- CONTACT VALIDITY (FINAL & CORRECT) --------------
 # =========================================================
-CATEGORY_SUFFIX_MAP = {
-    "": "Total",
-    "_PATIENTS_WITH_CONTACT_NUMBER": "with contact number",
-    "_WITH_CONTACT_NUMBER": "with contact number",
-    "_PATIENTS_WITH_EMAIL": "with email",
-    "_PATIENTS_WITH_ONLY_CONTACT": "only contact number",
-    "_PATIENTS_WITH_ONLY_EMAIL": "only email",
-    "_PATIENTS_WITH_BOTH_CONTACT_AND_EMAIL": "with both email and contact",
-    "_PATIENTS_WITH_NEITHER_CONTACT_NOR_EMAIL": "with neither contact nor email"
+CATEGORY_MAP = {
+    "Total": "",
+    "Only Contact": "_PATIENTS_WITH_ONLY_CONTACT",
+    "Only Email": "_PATIENTS_WITH_ONLY_EMAIL",
+    "Both Contact and Email": "_PATIENTS_WITH_BOTH_CONTACT_AND_EMAIL",
+    "None Available": "_PATIENTS_WITH_NEITHER_CONTACT_NOR_EMAIL"
 }
 
 def detect_base_metrics(columns):
     return [
         c for c in columns
-        if c.startswith("NUM_") and "_PATIENTS_" not in c and "_WITH_" not in c
+        if c.startswith("NUM_")
+        and "_PATIENTS_" not in c
+        and "_WITH_" not in c
     ]
 
-def compile_contact_validity_single_df(df):
-    records = []
+def compile_contact_validity(df):
+    rows = []
     base_metrics = detect_base_metrics(df.columns)
 
-    for base_metric in base_metrics:
-        for _, row in df.iterrows():
-            for suffix, category in CATEGORY_SUFFIX_MAP.items():
-                col = base_metric + suffix
-                if col in df.columns:
-                    records.append({
-                        "customer": row["customer"],
-                        "Category": category,
-                        "Metric": base_metric,
-                        "Value": row[col]
-                    })
+    for _, r in df.iterrows():
+        for category, suffix in CATEGORY_MAP.items():
+            row = {
+                "customer": r["customer"],
+                "Category": category
+            }
+            for metric in base_metrics:
+                col = metric + suffix
+                row[metric] = r[col] if col in df.columns else 0
+            rows.append(row)
 
-    out = pd.DataFrame(records)
+    out = pd.DataFrame(rows)
     out = add_health_system(out)
-
-    out = out.pivot_table(
-        index=["customer", "Health System Name", "Category"],
-        columns="Metric",
-        values="Value",
-        fill_value=0
-    ).reset_index()
-
     return out
 
 # =========================================================
@@ -208,7 +196,8 @@ if app_choice == "DER ZIP Data Compiler":
 
         # ================= AGGREGATED =================
         if mode == "Aggregated (Customer level)":
-            df = pd.concat([pd.read_csv(f) for f in uploaded_files], ignore_index=True)
+            dfs = [pd.read_csv(f) for f in uploaded_files]
+            df = pd.concat(dfs, ignore_index=True)
 
             if "customer" not in df.columns:
                 st.error("❌ 'customer' column is mandatory")
@@ -218,58 +207,31 @@ if app_choice == "DER ZIP Data Compiler":
             final_df = df.groupby("customer", as_index=False)[numeric_cols].sum()
             final_df = add_health_system(final_df)
 
-        # ============ MORE THAN 2 COLUMNS (PIVOT) ============
+            st.dataframe(final_df, use_container_width=True)
+
+        # ============ MORE THAN 2 COLUMNS =================
         elif mode == "Use this for more than 2 columns":
             df = pd.concat([pd.read_csv(f) for f in uploaded_files], ignore_index=True)
             df = add_health_system(df)
 
-            st.markdown("### 📊 Base Output")
             st.dataframe(df, use_container_width=True)
 
-            all_cols = df.columns.tolist()
-            numeric_cols = df.select_dtypes(include="number").columns.tolist()
+        # ============ CONTACT VALIDITY (FINAL) ============
+        elif mode == "Contact Validity Compilation":
 
-            rows = st.multiselect("Rows", all_cols)
-            columns = st.multiselect("Columns", all_cols)
-            values = st.multiselect("Values (numeric only)", numeric_cols)
-            agg_func = st.selectbox("Aggregation Function", ["sum", "mean", "count", "min", "max"])
-
-            if rows and values:
-                final_df = pd.pivot_table(
-                    df,
-                    index=rows,
-                    columns=columns if columns else None,
-                    values=values,
-                    aggfunc=agg_func,
-                    fill_value=0
-                ).reset_index()
-            else:
-                st.stop()
-
-        # ============ CONTACT VALIDITY =================
-        else:
-            compiled_dfs = []
+            compiled_outputs = []
 
             for file in uploaded_files:
-                try:
-                    df = pd.read_csv(file)
+                df = pd.read_csv(file)
 
-                    if df.empty:
-                        st.warning(f"⚠️ Skipped empty file: {file.name}")
-                        continue
+                if df.empty:
+                    continue
 
-                    if "customer" not in df.columns:
-                        st.warning(f"⚠️ 'customer' missing in {file.name}, skipped")
-                        continue
+                if "customer" not in df.columns:
+                    st.error(f"❌ 'customer' missing in {file.name}")
+                    st.stop()
 
-                    compiled_dfs.append(compile_contact_validity_single_df(df))
-
-                except EmptyDataError:
-                    st.warning(f"⚠️ Skipped empty file: {file.name}")
-
-            if not compiled_dfs:
-                st.error("❌ No valid files to process")
-                st.stop()
+                compiled_outputs.append(compile_contact_validity(df))
 
             final_df = reduce(
                 lambda l, r: pd.merge(
@@ -277,18 +239,18 @@ if app_choice == "DER ZIP Data Compiler":
                     on=["customer", "Health System Name", "Category"],
                     how="outer"
                 ),
-                compiled_dfs
+                compiled_outputs
             ).fillna(0)
 
-        st.subheader("📊 Final Output")
-        st.dataframe(final_df, use_container_width=True)
+            st.subheader("📊 Final Output")
+            st.dataframe(final_df, use_container_width=True)
 
-        st.download_button(
-            "⬇️ Download Final CSV",
-            final_df.to_csv(index=False),
-            "final.csv",
-            "text/csv"
-        )
+            st.download_button(
+                "⬇️ Download Final CSV",
+                final_df.to_csv(index=False),
+                "contact_validity_final.csv",
+                "text/csv"
+            )
 
 # =========================================================
 # ---------------- APP 1 UI -------------------------------
@@ -312,4 +274,3 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
-
