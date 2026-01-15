@@ -126,7 +126,12 @@ mapping = {'advantasure-prod': 'Advantasure (Env 1)',
  'trinity-prod': 'Trinity Health National',
  'uninet-prod': 'CHI Health Partners',
  'usrc-prod': 'US RenalCare',
- 'walgreens-prod': 'Walgreens'}
+ 'walgreens-prod': 'Walgreens',
+'champion-prod' : 'Champion Health Plan',
+'mdxhawaii-prod' : 'MDX Hawaii'
+'recuro-prod' : 'Recuro Health'
+'mhpartner-prod' : 'Mission Health Partners'
+  }
 
 def add_health_system(df):
     df = df.copy()
@@ -138,7 +143,7 @@ def add_health_system(df):
 # =========================================================
 CATEGORY_CONFIG = {
     "Total": "",
-    "With Contact" : "_patients_with_contact" ,
+    "With Contact" : "_patients_with_contact_number" ,
     "With Email" : "_patients_with_email",
     "Only Contact": "_patients_with_only_contact",
     "Only Email": "_patients_with_only_email",
@@ -327,6 +332,7 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
 
 
 
