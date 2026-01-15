@@ -2,7 +2,6 @@ import streamlit as st
 import json
 import re
 import pandas as pd
-from functools import reduce
 
 # =========================================================
 # APP CONFIG
@@ -139,7 +138,7 @@ def add_health_system(df):
     return df
 
 # =========================================================
-# -------- CONTACT VALIDITY CONFIG -------------------------
+# -------- CONTACT VALIDITY (FINAL & CORRECT) --------------
 # =========================================================
 CATEGORY_CONFIG = {
     "Total": "",
@@ -151,14 +150,22 @@ CATEGORY_CONFIG = {
     "None Available": "_patients_with_neither_contact_nor_email"
 }
 
+CONTACT_SUFFIXES = (
+    "_patients_with_contact_number",
+    "_patients_with_email",
+    "_patients_with_only_contact",
+    "_patients_with_only_email",
+    "_patients_with_both_contact_and_email",
+    "_patients_with_neither_contact_nor_email"
+)
+
 def compile_contact_validity(df):
     records = []
 
     den_cols = [c for c in df.columns if c.startswith("den_")]
     num_cols = [
         c for c in df.columns
-        if c.startswith("num_")
-        and not c.endswith(tuple(CATEGORY_CONFIG.values()))
+        if c.startswith("num_") and not c.endswith(CONTACT_SUFFIXES)
     ]
 
     for _, row in df.iterrows():
@@ -168,11 +175,9 @@ def compile_contact_validity(df):
                 "Category": category
             }
 
-            # Denominators → only Total
             for den in den_cols:
                 out[den] = row[den] if category == "Total" else 0
 
-            # Numerators
             for num in num_cols:
                 col = num + suffix if suffix else num
                 out[num] = row[col] if col in df.columns else 0
@@ -190,17 +195,12 @@ def reorder_contact_validity_columns(df):
     num_cols = sorted([c for c in df.columns if c.startswith("num_")])
 
     ordered_metrics = []
-
     for den in den_cols:
         suffix = den.replace("den_", "")
-        matching_num = f"num_{suffix}"
+        num = f"num_{suffix}"
         ordered_metrics.append(den)
-        if matching_num in num_cols:
-            ordered_metrics.append(matching_num)
-
-    for n in num_cols:
-        if n not in ordered_metrics:
-            ordered_metrics.append(n)
+        if num in num_cols:
+            ordered_metrics.append(num)
 
     return df[fixed_cols + ordered_metrics]
 
@@ -208,7 +208,6 @@ def reorder_contact_validity_columns(df):
 # ---------------- APP 2 : DER ZIP COMPILER ----------------
 # =========================================================
 if app_choice == "DER ZIP Data Compiler":
-    st.header("📦 DER ZIP Data Compiler")
 
     mode = st.selectbox(
         "Select processing mode",
@@ -227,49 +226,32 @@ if app_choice == "DER ZIP Data Compiler":
 
     if uploaded_files:
 
-        # ================= AGGREGATED =================
         if mode == "Aggregated (Customer level)":
-            dfs = [pd.read_csv(f) for f in uploaded_files]
-            df = pd.concat(dfs, ignore_index=True)
-
+            df = pd.concat((pd.read_csv(f) for f in uploaded_files), ignore_index=True)
             numeric_cols = df.select_dtypes(include="number").columns
             final_df = df.groupby("customer", as_index=False)[numeric_cols].sum()
             final_df = add_health_system(final_df)
+            st.dataframe(final_df, use_container_width=True)
 
-            st.dataframe(final_df.head(100), use_container_width=True)
-
-        # ================= RAW MERGE ==================
         elif mode == "Use this for more than 2 columns":
-            df = pd.concat([pd.read_csv(f) for f in uploaded_files], ignore_index=True)
+            df = pd.concat((pd.read_csv(f) for f in uploaded_files), ignore_index=True)
             df = add_health_system(df)
-            st.dataframe(df.head(100), use_container_width=True)
+            st.dataframe(df, use_container_width=True)
 
-        # ============ CONTACT VALIDITY =================
         elif mode == "Contact Validity Compilation":
 
-            dfs = []
-            for f in uploaded_files:
-                temp = pd.read_csv(f)
-                if not temp.empty:
-                    dfs.append(temp)
+            dfs = [pd.read_csv(f) for f in uploaded_files if not pd.read_csv(f).empty]
 
-            if not dfs:
-                st.error("❌ No valid CSV files uploaded")
-                st.stop()
+            merged_df = dfs[0]
+            for d in dfs[1:]:
+                merged_df = merged_df.merge(d, on="customer", how="outer")
 
-            merged_df = reduce(
-                lambda l, r: pd.merge(l, r, on="customer", how="outer", copy=False),
-                dfs
-            ).fillna(0)
+            merged_df = merged_df.fillna(0)
 
             final_df = compile_contact_validity(merged_df)
             final_df = reorder_contact_validity_columns(final_df)
 
-            st.subheader("📊 Final Output")
-            st.caption(
-                f"Rows: {len(final_df):,} | Columns: {len(final_df.columns)}"
-            )
-            st.dataframe(final_df.head(100), use_container_width=True)
+            st.dataframe(final_df, use_container_width=True)
 
             st.download_button(
                 "⬇️ Download Final CSV",
@@ -282,7 +264,6 @@ if app_choice == "DER ZIP Data Compiler":
 # ---------------- APP 1 UI -------------------------------
 # =========================================================
 if app_choice == "DER JSON Creator":
-    st.header("📌 DER JSON Creator")
 
     uploaded_files = st.file_uploader(
         "Upload SQL files",
