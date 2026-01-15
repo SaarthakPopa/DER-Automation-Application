@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import re
 import pandas as pd
+from pandas.errors import EmptyDataError
 
 # =========================================================
 # APP CONFIG
@@ -240,7 +241,16 @@ if app_choice == "DER ZIP Data Compiler":
 
         elif mode == "Contact Validity Compilation":
 
-            dfs = [pd.read_csv(f) for f in uploaded_files if not pd.read_csv(f).empty]
+            dfs = []
+            
+            for f in uploaded_files:
+                try:
+                    df_temp = pd.read_csv(f)
+                    if not df_temp.empty:
+                        dfs.append(df_temp)
+                except EmptyDataError:
+                    continue
+
 
             merged_df = dfs[0]
             for d in dfs[1:]:
@@ -281,3 +291,4 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
