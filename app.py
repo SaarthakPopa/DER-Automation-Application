@@ -148,9 +148,14 @@ def detect_base_metrics(columns):
     return [
         c for c in columns
         if c.startswith("NUM_")
-        and "_PATIENTS_" not in c
-        and "_WITH_" not in c
+        and not c.endswith("_PATIENTS_WITH_CONTACT_NUMBER")
+        and not c.endswith("_PATIENTS_WITH_EMAIL")
+        and not c.endswith("_PATIENTS_WITH_ONLY_CONTACT")
+        and not c.endswith("_PATIENTS_WITH_ONLY_EMAIL")
+        and not c.endswith("_PATIENTS_WITH_BOTH_CONTACT_AND_EMAIL")
+        and not c.endswith("_PATIENTS_WITH_NEITHER_CONTACT_NOR_EMAIL")
     ]
+
 
 def compile_contact_validity(df):
     rows = []
@@ -162,14 +167,17 @@ def compile_contact_validity(df):
                 "customer": r["customer"],
                 "Category": category
             }
+
             for metric in base_metrics:
                 col = metric + suffix
                 row[metric] = r[col] if col in df.columns else 0
+
             rows.append(row)
 
     out = pd.DataFrame(rows)
     out = add_health_system(out)
     return out
+
 
 # =========================================================
 # ---------------- APP 2 : DER ZIP COMPILER ----------------
@@ -274,3 +282,4 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
