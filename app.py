@@ -138,6 +138,8 @@ def add_health_system(df):
 # =========================================================
 CATEGORY_CONFIG = {
     "Total": "",
+    "With Contact" : "_patients_with_contact" ,
+    "With Email" : "_patients_with_email",
     "Only Contact": "_patients_with_only_contact",
     "Only Email": "_patients_with_only_email",
     "Both Contact and Email": "_patients_with_both_contact_and_email",
@@ -298,5 +300,6 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
 
 
