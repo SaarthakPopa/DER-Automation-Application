@@ -136,13 +136,14 @@ def add_health_system(df):
 # =========================================================
 # -------- CONTACT VALIDITY (FINAL & CORRECT) --------------
 # =========================================================
-CATEGORY_MAP = {
+CATEGORY_CONFIG = {
     "Total": "",
-    "Only Contact": "_PATIENTS_WITH_ONLY_CONTACT",
-    "Only Email": "_PATIENTS_WITH_ONLY_EMAIL",
-    "Both Contact and Email": "_PATIENTS_WITH_BOTH_CONTACT_AND_EMAIL",
-    "None Available": "_PATIENTS_WITH_NEITHER_CONTACT_NOR_EMAIL"
+    "Only Contact": "_patients_with_only_contact",
+    "Only Email": "_patients_with_only_email",
+    "Both Contact and Email": "_patients_with_both_contact_and_email",
+    "None Available": "_patients_with_neither_contact_nor_email"
 }
+
 
 def detect_base_metrics(columns):
     return [
@@ -158,25 +159,44 @@ def detect_base_metrics(columns):
 
 
 def compile_contact_validity(df):
-    rows = []
-    base_metrics = detect_base_metrics(df.columns)
+    records = []
 
-    for _, r in df.iterrows():
-        for category, suffix in CATEGORY_MAP.items():
-            row = {
-                "customer": r["customer"],
+    den_cols = [c for c in df.columns if c.startswith("den_")]
+    num_cols = [
+        c for c in df.columns
+        if c.startswith("num_")
+        and not c.endswith((
+            "_patients_with_contact_number",
+            "_patients_with_email",
+            "_patients_with_only_contact",
+            "_patients_with_only_email",
+            "_patients_with_both_contact_and_email",
+            "_patients_with_neither_contact_nor_email"
+        ))
+    ]
+
+    for _, row in df.iterrows():
+        for category, suffix in CATEGORY_CONFIG.items():
+            out = {
+                "customer": row["customer"],
                 "Category": category
             }
 
-            for metric in base_metrics:
-                col = metric + suffix
-                row[metric] = r[col] if col in df.columns else 0
+            # Denominators → only Total
+            for den in den_cols:
+                out[den] = row[den] if category == "Total" else 0
 
-            rows.append(row)
+            # Numerators
+            for num in num_cols:
+                col = num + suffix if suffix else num
+                out[num] = row[col] if col in df.columns else 0
 
-    out = pd.DataFrame(rows)
-    out = add_health_system(out)
-    return out
+            records.append(out)
+
+    result = pd.DataFrame(records)
+    result = add_health_system(result)
+    return result
+
 
 
 # =========================================================
@@ -225,40 +245,36 @@ if app_choice == "DER ZIP Data Compiler":
             st.dataframe(df, use_container_width=True)
 
         # ============ CONTACT VALIDITY (FINAL) ============
+
         elif mode == "Contact Validity Compilation":
 
-            compiled_outputs = []
+                dfs = []
+                for file in uploaded_files:
+                    temp = pd.read_csv(file)
+                    if not temp.empty:
+                        dfs.append(temp)
 
-            for file in uploaded_files:
-                df = pd.read_csv(file)
-
-                if df.empty:
-                    continue
-
-                if "customer" not in df.columns:
-                    st.error(f"❌ 'customer' missing in {file.name}")
+                if not dfs:
+                    st.error("❌ No valid CSV files uploaded")
                     st.stop()
 
-                compiled_outputs.append(compile_contact_validity(df))
+                merged_df = dfs[0]
+                for d in dfs[1:]:
+                    merged_df = merged_df.merge(d, on="customer", how="outer")
 
-            final_df = reduce(
-                lambda l, r: pd.merge(
-                    l, r,
-                    on=["customer", "Health System Name", "Category"],
-                    how="outer"
-                ),
-                compiled_outputs
-            ).fillna(0)
-
-            st.subheader("📊 Final Output")
-            st.dataframe(final_df, use_container_width=True)
-
-            st.download_button(
-                "⬇️ Download Final CSV",
-                final_df.to_csv(index=False),
-                "contact_validity_final.csv",
-                "text/csv"
-            )
+                merged_df = merged_df.fillna(0)
+            
+                final_df = compile_contact_validity(merged_df)
+            
+                st.subheader("📊 Final Output")
+                st.dataframe(final_df, use_container_width=True)
+            
+                st.download_button(
+                    "⬇️ Download Final CSV",
+                    final_df.to_csv(index=False),
+                    "final.csv",
+                    "text/csv"
+                )
 
 # =========================================================
 # ---------------- APP 1 UI -------------------------------
@@ -282,4 +298,5 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
 
