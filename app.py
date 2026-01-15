@@ -2,6 +2,7 @@ import streamlit as st
 import json
 import re
 import pandas as pd
+from functools import reduce
 
 # =========================================================
 # APP CONFIG
@@ -28,6 +29,7 @@ def clean_sql_query(file):
 def create_final_json(uploaded_files):
     metrics = []
     for idx, uploaded_file in enumerate(uploaded_files, start=1):
+        cleaned_query = clean_sql_query(uploaded_file)
         metrics.append({
             "id": idx,
             "metric": f"DER_{uploaded_file.name}",
@@ -40,8 +42,8 @@ def create_final_json(uploaded_files):
                 ]
             },
             "queries": {
-                "snowflake": {"database": "DAP","schema": "L2","query": clean_sql_query(uploaded_file)},
-                "postgres": {"database": "postgres","schema": "l2","query": clean_sql_query(uploaded_file)}
+                "snowflake": {"database": "DAP","schema": "L2","query": cleaned_query},
+                "postgres": {"database": "postgres","schema": "l2","query": cleaned_query}
             }
         })
     return {"metrics": metrics}
@@ -137,7 +139,7 @@ def add_health_system(df):
     return df
 
 # =========================================================
-# -------- CONTACT VALIDITY (OPTIMIZED & SAFE) -------------
+# -------- CONTACT VALIDITY CONFIG -------------------------
 # =========================================================
 CATEGORY_CONFIG = {
     "Total": "",
@@ -150,47 +152,57 @@ CATEGORY_CONFIG = {
 }
 
 def compile_contact_validity(df):
-    den_cols = [c for c in df.columns if c.startswith("den_")]
-    num_base_cols = [
-        c for c in df.columns
-        if c.startswith("num_") and "_patients_" not in c
-    ]
+    records = []
 
-    output_rows = []
+    den_cols = [c for c in df.columns if c.startswith("den_")]
+    num_cols = [
+        c for c in df.columns
+        if c.startswith("num_")
+        and not c.endswith(tuple(CATEGORY_CONFIG.values()))
+    ]
 
     for _, row in df.iterrows():
         for category, suffix in CATEGORY_CONFIG.items():
-            record = {
+            out = {
                 "customer": row["customer"],
                 "Category": category
             }
 
+            # Denominators → only Total
             for den in den_cols:
-                record[den] = row[den] if category == "Total" else 0
+                out[den] = row[den] if category == "Total" else 0
 
-            for num in num_base_cols:
+            # Numerators
+            for num in num_cols:
                 col = num + suffix if suffix else num
-                record[num] = row[col] if col in df.columns else 0
+                out[num] = row[col] if col in df.columns else 0
 
-            output_rows.append(record)
+            records.append(out)
 
-    result = pd.DataFrame(output_rows)
-    return add_health_system(result)
+    result = pd.DataFrame(records)
+    result = add_health_system(result)
+    return result
 
 def reorder_contact_validity_columns(df):
-    fixed = ["customer", "Health System Name", "Category"]
-    den = sorted([c for c in df.columns if c.startswith("den_")])
-    num = sorted([c for c in df.columns if c.startswith("num_")])
+    fixed_cols = ["customer", "Health System Name", "Category"]
 
-    ordered = []
-    for d in den:
-        ordered.append(d)
-        n = "num_" + d.replace("den_", "")
-        if n in num:
-            ordered.append(n)
+    den_cols = sorted([c for c in df.columns if c.startswith("den_")])
+    num_cols = sorted([c for c in df.columns if c.startswith("num_")])
 
-    remaining = [c for c in num if c not in ordered]
-    return df[fixed + ordered + remaining]
+    ordered_metrics = []
+
+    for den in den_cols:
+        suffix = den.replace("den_", "")
+        matching_num = f"num_{suffix}"
+        ordered_metrics.append(den)
+        if matching_num in num_cols:
+            ordered_metrics.append(matching_num)
+
+    for n in num_cols:
+        if n not in ordered_metrics:
+            ordered_metrics.append(n)
+
+    return df[fixed_cols + ordered_metrics]
 
 # =========================================================
 # ---------------- APP 2 : DER ZIP COMPILER ----------------
@@ -200,14 +212,40 @@ if app_choice == "DER ZIP Data Compiler":
 
     mode = st.selectbox(
         "Select processing mode",
-        ["Aggregated (Customer level)", "Use this for more than 2 columns", "Contact Validity Compilation"]
+        [
+            "Aggregated (Customer level)",
+            "Use this for more than 2 columns",
+            "Contact Validity Compilation"
+        ]
     )
 
-    uploaded_files = st.file_uploader("Upload CSV files", type=["csv"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "Upload CSV files",
+        type=["csv"],
+        accept_multiple_files=True
+    )
 
     if uploaded_files:
 
-        if mode == "Contact Validity Compilation":
+        # ================= AGGREGATED =================
+        if mode == "Aggregated (Customer level)":
+            dfs = [pd.read_csv(f) for f in uploaded_files]
+            df = pd.concat(dfs, ignore_index=True)
+
+            numeric_cols = df.select_dtypes(include="number").columns
+            final_df = df.groupby("customer", as_index=False)[numeric_cols].sum()
+            final_df = add_health_system(final_df)
+
+            st.dataframe(final_df.head(100), use_container_width=True)
+
+        # ================= RAW MERGE ==================
+        elif mode == "Use this for more than 2 columns":
+            df = pd.concat([pd.read_csv(f) for f in uploaded_files], ignore_index=True)
+            df = add_health_system(df)
+            st.dataframe(df.head(100), use_container_width=True)
+
+        # ============ CONTACT VALIDITY =================
+        elif mode == "Contact Validity Compilation":
 
             dfs = []
             for f in uploaded_files:
@@ -215,25 +253,28 @@ if app_choice == "DER ZIP Data Compiler":
                 if not temp.empty:
                     dfs.append(temp)
 
-            merged = dfs[0]
-            for d in dfs[1:]:
-                merged = merged.merge(d, on="customer", how="outer")
+            if not dfs:
+                st.error("❌ No valid CSV files uploaded")
+                st.stop()
 
-            merged = merged.fillna(0)
+            merged_df = reduce(
+                lambda l, r: pd.merge(l, r, on="customer", how="outer", copy=False),
+                dfs
+            ).fillna(0)
 
-            final_df = reorder_contact_validity_columns(
-                compile_contact_validity(merged)
+            final_df = compile_contact_validity(merged_df)
+            final_df = reorder_contact_validity_columns(final_df)
+
+            st.subheader("📊 Final Output")
+            st.caption(
+                f"Rows: {len(final_df):,} | Columns: {len(final_df.columns)}"
             )
-
-            # 🔥 SAFE PREVIEW (NO CRASH)
-            st.subheader("📊 Preview (First 100 Rows)")
-            st.caption(f"Total Rows: {len(final_df):,} | Total Columns: {len(final_df.columns)}")
             st.dataframe(final_df.head(100), use_container_width=True)
 
             st.download_button(
-                "⬇️ Download Full CSV",
+                "⬇️ Download Final CSV",
                 final_df.to_csv(index=False),
-                "contact_validity_final.csv",
+                "final.csv",
                 "text/csv"
             )
 
@@ -243,11 +284,16 @@ if app_choice == "DER ZIP Data Compiler":
 if app_choice == "DER JSON Creator":
     st.header("📌 DER JSON Creator")
 
-    uploaded_files = st.file_uploader("Upload SQL files", type=["sql"], accept_multiple_files=True)
+    uploaded_files = st.file_uploader(
+        "Upload SQL files",
+        type=["sql"],
+        accept_multiple_files=True
+    )
 
     if uploaded_files:
         final_json = create_final_json(uploaded_files)
         st.json(final_json)
+
         st.download_button(
             "⬇️ Download JSON",
             json.dumps(final_json, indent=4),
