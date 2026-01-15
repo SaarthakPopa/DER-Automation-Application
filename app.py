@@ -128,8 +128,8 @@ mapping = {'advantasure-prod': 'Advantasure (Env 1)',
  'usrc-prod': 'US RenalCare',
  'walgreens-prod': 'Walgreens',
 'champion-prod' : 'Champion Health Plan',
-'mdxhawaii-prod' : 'MDX Hawaii'
-'recuro-prod' : 'Recuro Health'
+'mdxhawaii-prod' : 'MDX Hawaii',
+'recuro-prod' : 'Recuro Health',
 'mhpartner-prod' : 'Mission Health Partners'
   }
 
@@ -332,6 +332,7 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
 
 
 
