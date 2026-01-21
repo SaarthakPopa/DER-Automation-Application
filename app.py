@@ -236,40 +236,57 @@ if app_choice == "DER ZIP Data Compiler":
 
         elif mode == "Use this for more than 2 columns":
             if uploaded_files:
-                # Load all files into a list of DataFrames
+                # 1. Load and Join Data
                 dfs = [pd.read_csv(f) for f in uploaded_files]
-                
-                # Start with the first DataFrame
                 final_df = dfs[0]
-                
-                # Successively join the rest
                 for i in range(1, len(dfs)):
                     next_df = dfs[i]
-                    
-                    # Identify common columns to join on (identifiers)
-                    # We exclude column names that look like metrics (start with num, den, count)
-                    # to prevent them from being treated as keys if they repeat
                     common_cols = [col for col in final_df.columns if col in next_df.columns]
-                    
-                    # Perform outer merge to keep all data points
                     final_df = pd.merge(final_df, next_df, on=common_cols, how='outer')
 
-                # Add the Health System Name mapping
-                if "customer" in final_df.columns:
-                    # Move Health System Name to the 2nd position for better visibility
-                    h_name = final_df["customer"].map(mapping).fillna("")
-                    final_df.insert(1, "Health System Name", h_name)
+                # 2. Define the Master Sort Order (The "Vaccine Categories")
+                # This list follows your exact requested sequence
+                vaccine_order = [
+                    "hpv_9_17", "shingles_50_59", "shingles_60_64", "shingles_65_plus",
+                    "rsv_covid_60_64", "rsv_covid_65_74", "rsv_covid_75_plus",
+                    "pneumococcal_50_plus", "pneumococcal_50_64", "pneumococcal_65_plus",
+                    "influenza_50_plus", "covid_65_plus", "rsv_60_plus",
+                    "men_b_acwy_abcwy_16_18", "men_b_acwy_abcwy_19_23",
+                    "men_acwy_abcwy_16_18", "men_acwy_abcwy_19_23",
+                    "men_b_16_18", "men_b_19_23",
+                    "men_acwy_16_18", "men_acwy_19_23",
+                    "men_abcwy_16_18", "men_abcwy_19_23",
+                    "paxlovid", "shingles_actual", "men_acwy_actual", "men_b_actual"
+                ]
+
+                # 3. Identify ID columns vs Metric columns
+                id_cols = ["customer", "Health System Name", "prid", "prnm", "plid", "plnm"]
+                existing_ids = [c for c in id_cols if c in final_df.columns]
+                metric_cols = [c for c in final_df.columns if c not in existing_ids]
+
+                # 4. Sorting Function
+                def get_sort_key(col_name):
+                    # Find which vaccine index this column belongs to
+                    for index, vaccine in enumerate(vaccine_order):
+                        if vaccine in col_name.lower():
+                            # Denominator priority: den_ gets 0, num_ gets 1
+                            prefix_priority = 0 if col_name.startswith("den_") or col_name.startswith("a_b_den") else 1
+                            return (index, prefix_priority, col_name)
+                    return (999, 0, col_name) # Fallback for unknown columns
+
+                sorted_metrics = sorted(metric_cols, key=get_sort_key)
+
+                # 5. Final Reordering
+                final_df = final_df[existing_ids + sorted_metrics]
                 
-                st.success(f"Successfully joined {len(uploaded_files)} files side-by-side.")
+                # Apply Health System Mapping
+                if "customer" in final_df.columns:
+                    final_df.insert(1, "Health System Name Mapping", final_df["customer"].map(mapping).fillna(""))
+
+                st.success("Files joined and columns reordered successfully!")
                 st.dataframe(final_df, use_container_width=True)
 
-                st.download_button(
-                    "⬇️ Download Joined CSV",
-                    final_df.to_csv(index=False),
-                    "joined_der_data.csv",
-                    "text/csv"
-                )
-
+                st.download_button("⬇️ Download Ordered CSV", final_df.to_csv(index=False), "ordered_joined_data.csv")
         elif mode == "Contact Validity Compilation":
 
             dfs = []
@@ -322,5 +339,6 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
 
 
