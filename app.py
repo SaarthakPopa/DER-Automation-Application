@@ -235,9 +235,40 @@ if app_choice == "DER ZIP Data Compiler":
             st.dataframe(final_df, use_container_width=True)
 
         elif mode == "Use this for more than 2 columns":
-            df = pd.concat((pd.read_csv(f) for f in uploaded_files), ignore_index=True)
-            df = add_health_system(df)
-            st.dataframe(df, use_container_width=True)
+            if uploaded_files:
+                # Load all files into a list of DataFrames
+                dfs = [pd.read_csv(f) for f in uploaded_files]
+                
+                # Start with the first DataFrame
+                final_df = dfs[0]
+                
+                # Successively join the rest
+                for i in range(1, len(dfs)):
+                    next_df = dfs[i]
+                    
+                    # Identify common columns to join on (identifiers)
+                    # We exclude column names that look like metrics (start with num, den, count)
+                    # to prevent them from being treated as keys if they repeat
+                    common_cols = [col for col in final_df.columns if col in next_df.columns]
+                    
+                    # Perform outer merge to keep all data points
+                    final_df = pd.merge(final_df, next_df, on=common_cols, how='outer')
+
+                # Add the Health System Name mapping
+                if "customer" in final_df.columns:
+                    # Move Health System Name to the 2nd position for better visibility
+                    h_name = final_df["customer"].map(mapping).fillna("")
+                    final_df.insert(1, "Health System Name", h_name)
+                
+                st.success(f"Successfully joined {len(uploaded_files)} files side-by-side.")
+                st.dataframe(final_df, use_container_width=True)
+
+                st.download_button(
+                    "⬇️ Download Joined CSV",
+                    final_df.to_csv(index=False),
+                    "joined_der_data.csv",
+                    "text/csv"
+                )
 
         elif mode == "Contact Validity Compilation":
 
@@ -291,4 +322,5 @@ if app_choice == "DER JSON Creator":
             "DER_JSON_FINAL.json",
             "application/json"
         )
+
 
